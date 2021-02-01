@@ -110,7 +110,7 @@ let otherPlayer = function
   | O -> X
 
 let render((a, b, c), (d, e, f), (g, h, i)) =
-  Printf.sprintf {|%s|%s|%s
+  sprintf {|%s|%s|%s
 ------
 %s|%s|%s
 ------
@@ -139,33 +139,58 @@ let parseMove (raw: string) =
     end
   | _ -> None
 
-let rec readMoveIo letter =
-  match parseMove (read_line ()) with
-  | Some position -> { at=position; place=letter }
+(* IO Monad *)
+(* Type of effects we want to use *)
+type effects = {
+  readLine: unit -> string;
+  printLine: string -> unit;
+}
+
+(* Wrapper for results *)
+type 'a io  = effects -> 'a
+
+(* Flatmap *)
+let (>>=) (io: 'a io) (f: 'a -> 'b io): 'b io =
+  fun eff -> f (io eff) eff
+
+(* Unit *)
+let pureIo v _ = v
+
+let readLine () eff = eff.readLine ()
+let printLine text eff = eff.printLine text
+
+let rec readMoveIo (letter: letter) : effects -> move =
+  readLine () >>= fun line ->
+  match (parseMove line) with
+  | Some position -> pureIo { at=position; place=letter }
   | None ->
-    printf "Bad move! Please input row and column numbers\n";
+    printLine "Bad move! Please input row and column numbers\n" >>= fun () ->
     readMoveIo letter
 
-let rec nextMoveIo board letter=
-  match makeMove board (readMoveIo letter) with
-  | Some newBoard -> newBoard
+let rec nextMoveIo (board: board) (letter: letter): effects -> board =
+  readMoveIo letter >>= fun move ->
+  match makeMove board move with
+  | Some newBoard -> pureIo newBoard
   | _ ->
-    printf "Bad move! Position is occupied.";
+    printLine "Bad move! Position is occupied." >>= fun () ->
     nextMoveIo board letter
 
-let rec playIo { board=board; whoseTurn=currentPlayer } =
-  printf "%s's turn\n" (renderLetter currentPlayer);
-  printf "%s\n" (render board);
-  let newBoard = nextMoveIo board currentPlayer in
-  printf "\n";
+let rec playIo { board=board; whoseTurn=currentPlayer }: effects -> unit =
+  printLine (sprintf "%s's turn\n" (renderLetter currentPlayer)) >>= fun () ->
+  printLine (sprintf "%s\n" (render board)) >>= fun () ->
+
+  nextMoveIo board currentPlayer >>= fun newBoard ->
+  printLine "\n" >>= fun () ->
+
   match outcome newBoard with
   | Winner letter ->
-    printf "%s wins!!!\n" (renderLetter letter);
-    printf "%s" (render newBoard);
+    printLine (sprintf "%s wins!!!\n" (renderLetter letter)) >>= fun () ->
+    printLine (sprintf "%s" (render newBoard));
   | Draw ->
-    printf "It's a draw!";
-    printf "%s\n" (render newBoard);
+    printLine "It's a draw!"
   | NoneYet ->
     playIo { board=newBoard; whoseTurn=otherPlayer currentPlayer }
 
-let _ = playIo initialGameState
+(* Finally pass the effects around *)
+let console = { readLine=read_line; printLine=printf "%s"}
+let _ = playIo initialGameState console
